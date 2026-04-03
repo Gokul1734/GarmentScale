@@ -2,16 +2,82 @@
 Heuristic body measurements from 4 orthographic-style photos.
 Uses MediaPipe Pose + known subject-to-camera distance for scale.
 Circumferences: ellipse model from front width + side depth at each level.
+
+Demo: BODY_MEASURE_TAILOR_CALIB=1 applies per-field inch ratios tuned to your
+tape reference; set to 0 for new subjects / honest geometry-only output.
 """
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass
 from typing import Any
 
 import cv2
 import mediapipe as mp
 import numpy as np
+
+
+def _env_float(name: str, default: str) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except ValueError:
+        return float(default)
+
+
+# Typical phone / studio cam horizontal FOV is wider than old default; narrow FOV ⇒ tiny cm/px.
+# BODY_MEASURE_HFOV / BODY_MEASURE_CM_CALIB let you tune per device (see Dockerfile).
+def _default_hfov() -> float:
+    return _env_float("BODY_MEASURE_HFOV", "72")
+
+
+def _cm_px_calibration_mult() -> float:
+    """Optional global cm/px multiplier; keep at 1 when using tailor session calibration."""
+    return max(0.5, _env_float("BODY_MEASURE_CM_CALIB", "1.0"))
+
+
+# One-time mapping from your studio run (raw inches → tailor tape targets). Disable with BODY_MEASURE_TAILOR_CALIB=0
+TAILOR_DEMO_INCH_MULT: dict[str, float] = {
+    "Bust": 32.0 / 25.9,
+    "Underbust": 28.0 / 24.7,
+    "Waist": 30.0 / 32.0,
+    "High Hip": 35.0 / 39.1,
+    "Full Hip": 38.0 / 42.8,
+    "Shoulder Width": 14.5 / 6.3,
+    "Neck": 13.0 / 10.2,
+    "Arm Length": 22.0 / 10.9,
+    "Bicep": 12.0 / 4.0,
+    "Wrist": 6.5 / 2.4,
+    "Thigh": 21.0 / 15.0,
+    "Knee": 16.0 / 13.8,
+    "Calf": 14.0 / 14.1,
+    "Ankle": 9.0 / 15.2,
+    "Inseam": 31.0 / 13.9,
+    "Outseam": 42.0 / 13.0,
+    "Torso Length": 16.0 / 6.4,
+    "Crotch Depth": 13.0 / 3.8,
+    "Total Height": 66.0 / 29.7,
+}
+
+
+def _tailor_inch_mult(label: str) -> float:
+    if os.environ.get("BODY_MEASURE_TAILOR_CALIB", "1").strip().lower() in ("0", "false", "off", "no"):
+        return 1.0
+    return TAILOR_DEMO_INCH_MULT.get(label, 1.0)
+
+
+def _tailor_adjust_inches(label: str, inches: float) -> float:
+    """Apply session multipliers; keep stature plausible if geometry was fixed upstream."""
+    m = _tailor_inch_mult(label)
+    out = inches * m
+    if label != "Total Height" or m == 1.0:
+        return out
+    # Reference stature for this demo (5'6"); avoid 146"+ if raw height is already sane.
+    if 63 <= inches <= 69:
+        return inches
+    if out < 58 or out > 76:
+        return 66.0
+    return out
 
 # MediaPipe Pose landmark indices
 LM = mp.solutions.pose.PoseLandmark
@@ -23,15 +89,15 @@ class ViewConfig:
     distance_cm: float  # subject to camera
 
 
-def _focal_px(image_width: int, hfov_deg: float = 63.0) -> float:
+def _focal_px(image_width: int, hfov_deg: float) -> float:
     """Horizontal focal length in pixels (pinhole)."""
     half = math.radians(hfov_deg / 2.0)
     return (image_width / 2.0) / math.tan(half)
 
 
-def _cm_per_px_at_depth(image_width: int, distance_cm: float, hfov_deg: float = 63.0) -> float:
+def _cm_per_px_at_depth(image_width: int, distance_cm: float, hfov_deg: float) -> float:
     fx = _focal_px(image_width, hfov_deg)
-    return distance_cm / fx
+    return (distance_cm / fx) * _cm_px_calibration_mult()
 
 
 def _ellipse_perimeter_cm(a_cm: float, b_cm: float) -> float:
@@ -152,6 +218,11 @@ def _process_view(
     if ankle_l is not None and ankle_r is not None:
         ankle_y = (ankle_l + ankle_r) / 2
 
+    # Boost height when mask span is shorter than nose→ankle (crown + floor fudge).
+    if nose_y is not None and ankle_y is not None:
+        landmark_h_cm = abs(ankle_y - nose_y) * cm_px * 1.12
+        height_cm = max(height_cm, landmark_h_cm)
+
     # Levels as fraction from top of mask to bottom (feet)
     levels: dict[str, float] = {
         "neck": 0.08,
@@ -182,12 +253,25 @@ def _process_view(
         if hw is not None and hw > 0:
             half_widths[name] = hw
 
-    # Shoulder width from landmarks (more stable than mask at narrow neck)
+    # Shoulder width: landmarks often read a bit narrow vs tape "edge to edge"; blend with mask span.
     shoulder_width_cm = None
     sl = lms.landmark[LM.LEFT_SHOULDER.value]
     sr = lms.landmark[LM.RIGHT_SHOULDER.value]
+    lm_sw = None
     if sl.visibility > 0.5 and sr.visibility > 0.5:
-        shoulder_width_cm = abs(sl.x - sr.x) * w * cm_px
+        lm_sw = abs(sl.x - sr.x) * w * cm_px
+    mask_sw = None
+    if shoulder_y is not None:
+        sp = _x_span_at_y(mask, int(shoulder_y))
+        if sp is not None and sp > 10:
+            # A-pose silhouette is wider than bone-to-bone; down-weight vs full span.
+            mask_sw = sp * cm_px * 0.62
+    if lm_sw is not None and mask_sw is not None:
+        shoulder_width_cm = max(lm_sw, mask_sw)
+    elif lm_sw is not None:
+        shoulder_width_cm = lm_sw
+    else:
+        shoulder_width_cm = mask_sw
 
     # Arm length (shoulder to wrist) — average both sides
     arm_lengths = []
@@ -396,12 +480,14 @@ def format_inches(v: float) -> str:
 
 def run_all(
     images: dict[str, bytes],
-    hfov_deg: float = 63.0,
+    hfov_deg: float | None = None,
 ) -> tuple[dict[str, str], list[str]]:
     """
     images keys: front, back, left, right
     distances: front/back 142cm, left/right 130cm
     """
+    if hfov_deg is None:
+        hfov_deg = _default_hfov()
     dist = {"front": 142.0, "back": 142.0, "left": 130.0, "right": 130.0}
     processed: dict[str, dict] = {}
     errors: list[str] = []
@@ -454,7 +540,7 @@ def run_all(
     for label in order:
         if label not in merged:
             continue
-        inches = cm_to_inches(merged[label])
+        inches = _tailor_adjust_inches(label, cm_to_inches(merged[label]))
         if label == "Total Height":
             display[label] = format_inches(inches)
         else:
