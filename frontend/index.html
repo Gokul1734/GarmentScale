@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Body Measure — MVP</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0f1218;
+      --panel: #181c27;
+      --border: #2a3142;
+      --text: #e8eaef;
+      --muted: #8b93a8;
+      --accent: #5b8def;
+      --ok: #3dd68c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "DM Sans", system-ui, sans-serif;
+      background: radial-gradient(1200px 600px at 20% -10%, #1a2744 0%, transparent 50%),
+        radial-gradient(800px 400px at 100% 0%, #1f2a3d 0%, transparent 45%),
+        var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 960px; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
+    h1 { font-size: 1.65rem; font-weight: 700; margin: 0 0 0.35rem; letter-spacing: -0.02em; }
+    .sub { color: var(--muted); font-size: 0.95rem; margin-bottom: 2rem; }
+    .grid {
+      display: grid;
+      gap: 1rem;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.1rem;
+    }
+    .card h3 { margin: 0 0 0.25rem; font-size: 0.95rem; font-weight: 600; }
+    .card .dist { font-size: 0.75rem; color: var(--muted); margin-bottom: 0.6rem; }
+    input[type="file"] { width: 100%; font-size: 0.8rem; color: var(--muted); }
+    button {
+      margin-top: 1.25rem;
+      width: 100%;
+      max-width: 320px;
+      padding: 0.85rem 1.2rem;
+      font-family: inherit;
+      font-size: 1rem;
+      font-weight: 600;
+      color: #fff;
+      background: linear-gradient(135deg, #4a7aea, #5b8def);
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      box-shadow: 0 4px 20px rgba(91, 141, 239, 0.35);
+    }
+    button:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
+    .results { margin-top: 2rem; display: none; }
+    .results.visible { display: block; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+    th, td { text-align: left; padding: 0.55rem 0.75rem; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }
+    .section-title { margin: 1.75rem 0 0.75rem; font-size: 1.05rem; font-weight: 600; }
+    .warn {
+      margin-top: 1rem;
+      padding: 0.75rem 1rem;
+      background: rgba(234, 179, 8, 0.12);
+      border: 1px solid rgba(234, 179, 8, 0.35);
+      border-radius: 8px;
+      font-size: 0.85rem;
+      color: #fcd34d;
+    }
+    .note {
+      margin-top: 1.5rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      border-top: 1px solid var(--border);
+      padding-top: 1rem;
+    }
+    .loader { display: none; margin-top: 0.75rem; font-size: 0.9rem; color: var(--accent); }
+    .loader.on { display: block; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Body measurements</h1>
+    <p class="sub">Upload four photos — front &amp; back at <strong>142&nbsp;cm</strong>, left &amp; right profile at <strong>130&nbsp;cm</strong>. Tight clothing and A-pose improve accuracy.</p>
+
+    <div class="grid">
+      <div class="card">
+        <h3>Front</h3>
+        <div class="dist">Camera ↔ subject: 142&nbsp;cm</div>
+        <input type="file" id="front" accept="image/*" />
+      </div>
+      <div class="card">
+        <h3>Back</h3>
+        <div class="dist">Camera ↔ subject: 142&nbsp;cm</div>
+        <input type="file" id="back" accept="image/*" />
+      </div>
+      <div class="card">
+        <h3>Left profile</h3>
+        <div class="dist">Camera ↔ subject: 130&nbsp;cm</div>
+        <input type="file" id="left" accept="image/*" />
+      </div>
+      <div class="card">
+        <h3>Right profile</h3>
+        <div class="dist">Camera ↔ subject: 130&nbsp;cm</div>
+        <input type="file" id="right" accept="image/*" />
+      </div>
+    </div>
+
+    <button type="button" id="go">Calculate measurements</button>
+    <div class="loader" id="loader">Processing with AI (pose + silhouette)…</div>
+
+    <div class="results" id="results">
+      <h2 class="section-title">Full body (tailor-style)</h2>
+      <div class="card" style="padding: 0; overflow: hidden;">
+        <table>
+          <thead><tr><th>Measurement</th><th>Value</th></tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+
+      <h2 class="section-title">Jean-style summary</h2>
+      <div class="card" style="padding: 0; overflow: hidden;">
+        <table>
+          <thead><tr><th>Item</th><th>Value</th></tr></thead>
+          <tbody id="jeanbody"></tbody>
+        </table>
+      </div>
+      <div id="warnings"></div>
+      <p class="note">MVP uses MediaPipe Pose + segmentation, pinhole scale from your distances, and an ellipse model for girth. Numbers are estimates for demos — calibrate with a tape measure on known subjects before production use.</p>
+    </div>
+  </div>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const go = $("go");
+    const loader = $("loader");
+    const results = $("results");
+
+    go.addEventListener("click", async () => {
+      const ids = ["front", "back", "left", "right"];
+      const fd = new FormData();
+      for (const id of ids) {
+        const inp = $(id);
+        if (!inp.files || !inp.files[0]) {
+          alert("Please choose all four images.");
+          return;
+        }
+        fd.append(id, inp.files[0]);
+      }
+      go.disabled = true;
+      loader.classList.add("on");
+      results.classList.remove("visible");
+      try {
+        const r = await fetch("/api/measure", { method: "POST", body: fd });
+        const raw = await r.text();
+        let data;
+        try {
+          data = JSON.parse(raw);
+        } catch {
+          throw new Error(raw.slice(0, 200) || `Server error (${r.status})`);
+        }
+        if (!r.ok)
+          throw new Error(
+            typeof data.detail === "string"
+              ? data.detail
+              : Array.isArray(data.detail)
+                ? data.detail.map((x) => x.msg || x).join(", ")
+                : data.error || raw.slice(0, 200) || "Request failed",
+          );
+
+        const tbody = $("tbody");
+        tbody.innerHTML = "";
+        for (const [k, v] of Object.entries(data.measurements || {})) {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td>${k}</td><td>${v}</td>`;
+          tbody.appendChild(tr);
+        }
+
+        const jb = $("jeanbody");
+        jb.innerHTML = "";
+        for (const [k, v] of Object.entries(data.jean_style || {})) {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td>${k}</td><td>${v}</td>`;
+          jb.appendChild(tr);
+        }
+
+        const w = $("warnings");
+        w.innerHTML = "";
+        if (data.warnings && data.warnings.length) {
+          const div = document.createElement("div");
+          div.className = "warn";
+          div.textContent = data.warnings.join(" ");
+          w.appendChild(div);
+        }
+        results.classList.add("visible");
+      } catch (e) {
+        alert(e.message || String(e));
+      } finally {
+        go.disabled = false;
+        loader.classList.remove("on");
+      }
+    });
+  </script>
+</body>
+</html>
