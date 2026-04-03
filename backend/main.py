@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.measure import run_all
+from backend.measure import build_jean_style, run_all
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -46,11 +46,7 @@ async def measure(
             "right": await right.read(),
         }
         display, errors = run_all(imgs)
-        jean = {}
-        for k in ("Crotch Depth", "Waist", "Full Hip", "Thigh", "Knee", "Calf", "Ankle", "Outseam"):
-            if k in display:
-                label = "Full Length" if k == "Outseam" else k
-                jean[label] = display[k]
+        jean = build_jean_style(display)
         return {
             "measurements": display,
             "jean_style": jean,

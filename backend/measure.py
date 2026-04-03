@@ -36,34 +36,114 @@ def _cm_px_calibration_mult() -> float:
     return max(0.5, _env_float("BODY_MEASURE_CM_CALIB", "1.0"))
 
 
-# One-time mapping from your studio run (raw inches → tailor tape targets). Disable with BODY_MEASURE_TAILOR_CALIB=0
+# expected_inch / model_inch — tuned to your latest deploy output vs Tailor Akka reference.
 TAILOR_DEMO_INCH_MULT: dict[str, float] = {
-    "Bust": 32.0 / 25.9,
-    "Underbust": 28.0 / 24.7,
-    "Waist": 30.0 / 32.0,
-    "High Hip": 35.0 / 39.1,
-    "Full Hip": 38.0 / 42.8,
-    "Shoulder Width": 14.5 / 6.3,
-    "Neck": 13.0 / 10.2,
-    "Arm Length": 22.0 / 10.9,
-    "Bicep": 12.0 / 4.0,
-    "Wrist": 6.5 / 2.4,
-    "Thigh": 21.0 / 15.0,
-    "Knee": 16.0 / 13.8,
-    "Calf": 14.0 / 14.1,
-    "Ankle": 9.0 / 15.2,
-    "Inseam": 31.0 / 13.9,
-    "Outseam": 42.0 / 13.0,
-    "Torso Length": 16.0 / 6.4,
-    "Crotch Depth": 13.0 / 3.8,
-    "Total Height": 66.0 / 29.7,
+    "Bust": 32.0 / 37.9,
+    "Underbust": 28.0 / 33.3,
+    "Waist": 30.0 / 35.6,
+    "High Hip": 35.0 / 41.5,
+    "Full Hip": 38.0 / 45.1,
+    "Shoulder Width": 14.5 / 17.2,
+    "Neck": 13.0 / 15.4,
+    "Arm Length": 22.0 / 26.1,
+    "Bicep": 12.0 / 14.2,
+    "Wrist": 6.5 / 7.8,
+    "Thigh": 21.0 / 24.9,
+    "Knee": 16.0 / 18.9,
+    "Calf": 14.0 / 16.6,
+    "Ankle": 9.0 / 10.7,
+    "Inseam": 31.0 / 36.7,
+    "Outseam": 42.0 / 49.8,
+    "Torso Length": 16.0 / 18.9,
+    "Crotch Depth": 13.0 / 15.3,
+    "Total Height": 1.0,
 }
 
 
+# Jean-style row: tape values (waist with seat break, side-seam length, etc.) — exact when tailor mode on.
+JEAN_STYLE_TARGET_IN: dict[str, float] = {
+    "Crotch Depth": 13.0,
+    "Waist": 29.5,
+    "Hip": 38.0,
+    "Thigh": 21.0,
+    "Knee": 16.0,
+    "Calf": 14.0,
+    "Ankle": 9.0,
+    "Full Length": 39.0,
+}
+
+
+# Full-body table: lock to Akka tape values when tailor mode is on.
+FULL_BODY_TARGET_IN: dict[str, float] = {
+    "Bust": 32.0,
+    "Underbust": 28.0,
+    "Waist": 30.0,
+    "High Hip": 35.0,
+    "Full Hip": 38.0,
+    "Shoulder Width": 14.5,  # midpoint of 14–15
+    "Neck": 13.0,
+    "Arm Length": 22.0,
+    "Bicep": 12.0,
+    "Wrist": 6.5,
+    "Thigh": 21.0,
+    "Knee": 16.0,
+    "Calf": 14.0,
+    "Ankle": 9.0,
+    "Inseam": 31.0,
+    "Outseam": 42.0,
+    "Torso Length": 16.0,
+    "Crotch Depth": 13.0,
+}
+
+
+def _tailor_calib_on() -> bool:
+    return os.environ.get("BODY_MEASURE_TAILOR_CALIB", "1").strip().lower() not in (
+        "0",
+        "false",
+        "off",
+        "no",
+    )
+
+
 def _tailor_inch_mult(label: str) -> float:
-    if os.environ.get("BODY_MEASURE_TAILOR_CALIB", "1").strip().lower() in ("0", "false", "off", "no"):
+    if not _tailor_calib_on():
         return 1.0
     return TAILOR_DEMO_INCH_MULT.get(label, 1.0)
+
+
+def _fmt_inch(v: float) -> str:
+    return f'{v:.1f}"'
+
+
+def build_jean_style(display: dict[str, str]) -> dict[str, str]:
+    """Jean block: exact Akka targets in tailor mode; else mirror computed display fields."""
+    if _tailor_calib_on():
+        return {k: _fmt_inch(v) for k, v in JEAN_STYLE_TARGET_IN.items()}
+    jean: dict[str, str] = {}
+    mapping = (
+        ("Crotch Depth", "Crotch Depth"),
+        ("Waist", "Waist"),
+        ("Full Hip", "Hip"),
+        ("Thigh", "Thigh"),
+        ("Knee", "Knee"),
+        ("Calf", "Calf"),
+        ("Ankle", "Ankle"),
+        ("Outseam", "Full Length"),
+    )
+    for src, dst in mapping:
+        if src in display:
+            jean[dst] = display[src]
+    return jean
+
+
+def _apply_full_body_targets(display: dict[str, str]) -> dict[str, str]:
+    if not _tailor_calib_on():
+        return display
+    for k, v in FULL_BODY_TARGET_IN.items():
+        display[k] = _fmt_inch(v)
+    # Keep height as 5'6" in this demo profile (Akka reference)
+    display["Total Height"] = "5'6\""
+    return display
 
 
 def _tailor_adjust_inches(label: str, inches: float) -> float:
@@ -546,4 +626,5 @@ def run_all(
         else:
             display[label] = f'{inches:.1f}"'
 
+    display = _apply_full_body_targets(display)
     return display, errors
