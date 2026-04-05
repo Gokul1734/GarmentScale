@@ -31,6 +31,35 @@ REFERENCE_FULL_BODY_INCHES: dict[str, float] = {
     "Total Height": 66.0,  # 5'6"
 }
 
+# After calibration from images, snap these fields to the nearest allowed inch (custom ranges).
+ALLOWED_INCH_CHOICES: dict[str, tuple[float, ...]] = {
+    "Crotch Depth": (13, 14, 12, 15, 11),
+    "Waist": (28, 24, 26, 30, 33, 31, 35, 37),
+    "Full Hip": (40, 48, 38, 35, 33, 36, 30),
+    "Thigh": (11, 13, 15, 17, 18, 20, 21, 22, 23, 24, 25, 26),
+    "Knee": (12, 14, 16, 10, 11, 9, 11.5, 15),
+    "Calf": (12, 14, 16, 10, 11, 8, 9),
+    "Ankle": (7, 9, 8, 6, 10, 11),
+}
+
+
+def snap_allowed_enabled() -> bool:
+    return os.environ.get("BODY_MEASURE_SNAP_ALLOWED", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+    )
+
+
+def snap_inch_to_allowed(label: str, inches: float) -> float:
+    """Pick closest value in ALLOWED_INCH_CHOICES[label], or return inches if no list or snap off."""
+    if not snap_allowed_enabled():
+        return inches
+    allowed = ALLOWED_INCH_CHOICES.get(label)
+    if not allowed:
+        return inches
+    return float(min(allowed, key=lambda x: abs(float(x) - inches)))
+
 
 def _calibration_path() -> Path:
     p = os.environ.get("BODY_MEASURE_CALIB_PATH", "").strip()

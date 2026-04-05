@@ -18,7 +18,7 @@ import cv2
 import mediapipe as mp
 import numpy as np
 
-from backend.calibration import effective_mults
+from backend.calibration import effective_mults, snap_inch_to_allowed
 from backend.image_io import decode_image_bytes_to_bgr
 
 
@@ -50,7 +50,7 @@ def _inch_decimal_places() -> int:
 
 def _fmt_inch(v: float) -> str:
     d = _inch_decimal_places()
-    return f"{v:.{d}f}\""
+    return f'{v:.{d}f}"'
 
 
 def build_jean_style(display: dict[str, str]) -> dict[str, str]:
@@ -101,6 +101,8 @@ def _merged_to_display_strings(merged: dict[str, float], mults: dict[str, float]
         raw_in = cm_to_inches(merged[label])
         m = mults.get(label, 1.0)
         adj = raw_in * m
+        if label != "Total Height":
+            adj = snap_inch_to_allowed(label, adj)
         if label == "Total Height":
             display[label] = format_inches(adj)
         else:
