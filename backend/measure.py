@@ -3,8 +3,9 @@ Heuristic body measurements from 4 orthographic-style photos.
 Uses MediaPipe Pose + known subject-to-camera distance for scale.
 Circumferences: ellipse model from front width + side depth at each level.
 
-Demo: BODY_MEASURE_TAILOR_CALIB=1 applies per-field inch ratios tuned to your
-tape reference; set to 0 for new subjects / honest geometry-only output.
+Calibration: POST /api/train with the same four photos + Akka tape reference learns
+per-field multipliers (saved under data/tape_calibration.json). Measurements are
+always computed from the images; multipliers map raw geometry toward tape.
 """
 from __future__ import annotations
 
@@ -16,6 +17,9 @@ from typing import Any
 import cv2
 import mediapipe as mp
 import numpy as np
+
+from backend.calibration import effective_mults
+from backend.image_io import decode_image_bytes_to_bgr
 
 
 def _env_float(name: str, default: str) -> float:
@@ -36,89 +40,12 @@ def _cm_px_calibration_mult() -> float:
     return max(0.5, _env_float("BODY_MEASURE_CM_CALIB", "1.0"))
 
 
-# expected_inch / model_inch — tuned to your latest deploy output vs Tailor Akka reference.
-TAILOR_DEMO_INCH_MULT: dict[str, float] = {
-    "Bust": 32.0 / 37.9,
-    "Underbust": 28.0 / 33.3,
-    "Waist": 30.0 / 35.6,
-    "High Hip": 35.0 / 41.5,
-    "Full Hip": 38.0 / 45.1,
-    "Shoulder Width": 14.5 / 17.2,
-    "Neck": 13.0 / 15.4,
-    "Arm Length": 22.0 / 26.1,
-    "Bicep": 12.0 / 14.2,
-    "Wrist": 6.5 / 7.8,
-    "Thigh": 21.0 / 24.9,
-    "Knee": 16.0 / 18.9,
-    "Calf": 14.0 / 16.6,
-    "Ankle": 9.0 / 10.7,
-    "Inseam": 31.0 / 36.7,
-    "Outseam": 42.0 / 49.8,
-    "Torso Length": 16.0 / 18.9,
-    "Crotch Depth": 13.0 / 15.3,
-    "Total Height": 1.0,
-}
-
-
-# Jean-style row: tape values (waist with seat break, side-seam length, etc.) — exact when tailor mode on.
-JEAN_STYLE_TARGET_IN: dict[str, float] = {
-    "Crotch Depth": 13.0,
-    "Waist": 29.5,
-    "Hip": 38.0,
-    "Thigh": 21.0,
-    "Knee": 16.0,
-    "Calf": 14.0,
-    "Ankle": 9.0,
-    "Full Length": 39.0,
-}
-
-
-# Full-body table: lock to Akka tape values when tailor mode is on.
-FULL_BODY_TARGET_IN: dict[str, float] = {
-    "Bust": 32.0,
-    "Underbust": 28.0,
-    "Waist": 30.0,
-    "High Hip": 35.0,
-    "Full Hip": 38.0,
-    "Shoulder Width": 14.5,  # midpoint of 14–15
-    "Neck": 13.0,
-    "Arm Length": 22.0,
-    "Bicep": 12.0,
-    "Wrist": 6.5,
-    "Thigh": 21.0,
-    "Knee": 16.0,
-    "Calf": 14.0,
-    "Ankle": 9.0,
-    "Inseam": 31.0,
-    "Outseam": 42.0,
-    "Torso Length": 16.0,
-    "Crotch Depth": 13.0,
-}
-
-
-def _tailor_calib_on() -> bool:
-    return os.environ.get("BODY_MEASURE_TAILOR_CALIB", "1").strip().lower() not in (
-        "0",
-        "false",
-        "off",
-        "no",
-    )
-
-
-def _tailor_inch_mult(label: str) -> float:
-    if not _tailor_calib_on():
-        return 1.0
-    return TAILOR_DEMO_INCH_MULT.get(label, 1.0)
-
-
 def _fmt_inch(v: float) -> str:
     return f'{v:.1f}"'
 
 
 def build_jean_style(display: dict[str, str]) -> dict[str, str]:
-    """Jean block: exact Akka targets in tailor mode; else mirror computed display fields."""
-    if _tailor_calib_on():
-        return {k: _fmt_inch(v) for k, v in JEAN_STYLE_TARGET_IN.items()}
+    """Jean-style rows derived from calibrated full-body display (same pipeline)."""
     jean: dict[str, str] = {}
     mapping = (
         ("Crotch Depth", "Crotch Depth"),
@@ -136,28 +63,41 @@ def build_jean_style(display: dict[str, str]) -> dict[str, str]:
     return jean
 
 
-def _apply_full_body_targets(display: dict[str, str]) -> dict[str, str]:
-    if not _tailor_calib_on():
-        return display
-    for k, v in FULL_BODY_TARGET_IN.items():
-        display[k] = _fmt_inch(v)
-    # Keep height as 5'6" in this demo profile (Akka reference)
-    display["Total Height"] = "5'6\""
+def _merged_to_display_strings(merged: dict[str, float], mults: dict[str, float]) -> dict[str, str]:
+    display: dict[str, str] = {}
+    order = [
+        "Bust",
+        "Underbust",
+        "Waist",
+        "High Hip",
+        "Full Hip",
+        "Shoulder Width",
+        "Neck",
+        "Arm Length",
+        "Bicep",
+        "Wrist",
+        "Thigh",
+        "Knee",
+        "Calf",
+        "Ankle",
+        "Inseam",
+        "Outseam",
+        "Torso Length",
+        "Crotch Depth",
+        "Total Height",
+    ]
+    for label in order:
+        if label not in merged:
+            continue
+        raw_in = cm_to_inches(merged[label])
+        m = mults.get(label, 1.0)
+        adj = raw_in * m
+        if label == "Total Height":
+            display[label] = format_inches(adj)
+        else:
+            display[label] = f'{adj:.1f}"'
     return display
 
-
-def _tailor_adjust_inches(label: str, inches: float) -> float:
-    """Apply session multipliers; keep stature plausible if geometry was fixed upstream."""
-    m = _tailor_inch_mult(label)
-    out = inches * m
-    if label != "Total Height" or m == 1.0:
-        return out
-    # Reference stature for this demo (5'6"); avoid 146"+ if raw height is already sane.
-    if 63 <= inches <= 69:
-        return inches
-    if out < 58 or out > 76:
-        return 66.0
-    return out
 
 # MediaPipe Pose landmark indices
 LM = mp.solutions.pose.PoseLandmark
@@ -578,8 +518,7 @@ def run_all(
             errors.append(f"Missing image: {name}")
             processed[name] = {"ok": False, "error": "missing"}
             continue
-        arr = np.frombuffer(raw, dtype=np.uint8)
-        im = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        im = decode_image_bytes_to_bgr(raw)
         if im is None:
             errors.append(f"Could not decode: {name}")
             processed[name] = {"ok": False, "error": "decode"}
@@ -595,36 +534,41 @@ def run_all(
         processed["right"],
     )
 
-    display: dict[str, str] = {}
-    order = [
-        "Bust",
-        "Underbust",
-        "Waist",
-        "High Hip",
-        "Full Hip",
-        "Shoulder Width",
-        "Neck",
-        "Arm Length",
-        "Bicep",
-        "Wrist",
-        "Thigh",
-        "Knee",
-        "Calf",
-        "Ankle",
-        "Inseam",
-        "Outseam",
-        "Torso Length",
-        "Crotch Depth",
-        "Total Height",
-    ]
-    for label in order:
-        if label not in merged:
-            continue
-        inches = _tailor_adjust_inches(label, cm_to_inches(merged[label]))
-        if label == "Total Height":
-            display[label] = format_inches(inches)
-        else:
-            display[label] = f'{inches:.1f}"'
-
-    display = _apply_full_body_targets(display)
+    mults = effective_mults()
+    display = _merged_to_display_strings(merged, mults)
     return display, errors
+
+
+def compute_raw_inches(
+    images: dict[str, bytes],
+    hfov_deg: float | None = None,
+) -> tuple[dict[str, float], list[str]]:
+    """Raw model inches (no tape calibration) — for POST /api/train."""
+    if hfov_deg is None:
+        hfov_deg = _default_hfov()
+    dist = {"front": 142.0, "back": 142.0, "left": 130.0, "right": 130.0}
+    processed: dict[str, dict] = {}
+    errors: list[str] = []
+
+    for name in ("front", "back", "left", "right"):
+        raw = images.get(name)
+        if not raw:
+            errors.append(f"Missing image: {name}")
+            processed[name] = {"ok": False, "error": "missing"}
+            continue
+        im = decode_image_bytes_to_bgr(raw)
+        if im is None:
+            errors.append(f"Could not decode: {name}")
+            processed[name] = {"ok": False, "error": "decode"}
+            continue
+        processed[name] = _process_view(im, dist[name], hfov_deg)
+        if not processed[name].get("ok"):
+            errors.append(f"{name}: {processed[name].get('error', 'failed')}")
+
+    merged = merge_measurements(
+        processed["front"],
+        processed["back"],
+        processed["left"],
+        processed["right"],
+    )
+    return {k: cm_to_inches(v) for k, v in merged.items()}, errors

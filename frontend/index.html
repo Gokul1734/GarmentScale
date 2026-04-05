@@ -60,6 +60,13 @@
       cursor: pointer;
       box-shadow: 0 4px 20px rgba(91, 141, 239, 0.35);
     }
+    button.secondary {
+      margin-top: 0.75rem;
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid var(--border);
+      box-shadow: none;
+    }
     button:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
     .results { margin-top: 2rem; display: none; }
     .results.visible { display: block; }
@@ -116,6 +123,7 @@
     </div>
 
     <button type="button" id="go">Calculate measurements</button>
+    <button type="button" id="train" class="secondary">Train tape calibration (same 4 photos + Akka reference)</button>
     <div class="loader" id="loader">Processing with AI (pose + silhouette)…</div>
 
     <div class="results" id="results">
@@ -135,25 +143,68 @@
         </table>
       </div>
       <div id="warnings"></div>
-      <p class="note">MVP uses MediaPipe Pose + segmentation, pinhole scale from your distances, and an ellipse model for girth. Numbers are estimates for demos — calibrate with a tape measure on known subjects before production use.</p>
+      <p class="note">Measurements are computed from your images (pose + silhouette). EXIF orientation is applied so phones shoot correctly. Use <strong>Train tape calibration</strong> once with your four reference photos: the app learns multipliers toward the Akka tape list and saves them on the server. Until then, optional default multipliers may apply (set <code>BODY_MEASURE_DEFAULT_CALIB=0</code> for raw geometry only).</p>
     </div>
   </div>
   <script>
     const $ = (id) => document.getElementById(id);
     const go = $("go");
+    const train = $("train");
     const loader = $("loader");
     const results = $("results");
 
-    go.addEventListener("click", async () => {
+    function buildFormData() {
       const ids = ["front", "back", "left", "right"];
       const fd = new FormData();
       for (const id of ids) {
         const inp = $(id);
-        if (!inp.files || !inp.files[0]) {
-          alert("Please choose all four images.");
-          return;
-        }
+        if (!inp.files || !inp.files[0]) return null;
         fd.append(id, inp.files[0]);
+      }
+      return fd;
+    }
+
+    train.addEventListener("click", async () => {
+      const fd = buildFormData();
+      if (!fd) {
+        alert("Please choose all four images first.");
+        return;
+      }
+      train.disabled = true;
+      go.disabled = true;
+      loader.classList.add("on");
+      loader.textContent = "Training calibration (reference ÷ raw model)…";
+      try {
+        const r = await fetch("/api/train", { method: "POST", body: fd });
+        const raw = await r.text();
+        let data;
+        try {
+          data = JSON.parse(raw);
+        } catch {
+          throw new Error(raw.slice(0, 200) || `Server error (${r.status})`);
+        }
+        if (!r.ok)
+          throw new Error(data.detail || data.error || "Train failed");
+        alert(
+          "Calibration saved. Multipliers learned for " +
+            Object.keys(data.mults || {}).length +
+            " fields. You can run Calculate measurements anytime.",
+        );
+      } catch (e) {
+        alert(e.message || String(e));
+      } finally {
+        train.disabled = false;
+        go.disabled = false;
+        loader.classList.remove("on");
+        loader.textContent = "Processing with AI (pose + silhouette)…";
+      }
+    });
+
+    go.addEventListener("click", async () => {
+      const fd = buildFormData();
+      if (!fd) {
+        alert("Please choose all four images.");
+        return;
       }
       go.disabled = true;
       loader.classList.add("on");

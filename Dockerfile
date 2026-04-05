@@ -21,12 +21,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend ./backend
 COPY frontend ./frontend
+COPY data ./data
 
 ENV PYTHONUNBUFFERED=1
 # Wider default FOV + multiplier lift pinhole scale toward real tape (tune per camera).
 ENV BODY_MEASURE_HFOV=72
 ENV BODY_MEASURE_CM_CALIB=1.0
-ENV BODY_MEASURE_TAILOR_CALIB=1
+ENV BODY_MEASURE_DEFAULT_CALIB=1
 
 # Render (and others) set PORT; default 8000 for local Docker
 CMD sh -c 'python -m uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}'
