@@ -123,7 +123,7 @@
     </div>
 
     <button type="button" id="go">Calculate measurements</button>
-    <button type="button" id="train" class="secondary">Train tape calibration (same 4 photos + Akka reference)</button>
+    <button type="button" id="train" class="secondary">Calibrate sample image</button>
     <div class="loader" id="loader">Processing with AI (pose + silhouette)…</div>
 
     <div class="results" id="results">
@@ -173,7 +173,7 @@
       train.disabled = true;
       go.disabled = true;
       loader.classList.add("on");
-      loader.textContent = "Training calibration (reference ÷ raw model)…";
+      loader.textContent = "Calibrating sample image…";
       try {
         const r = await fetch("/api/train", { method: "POST", body: fd });
         const raw = await r.text();
