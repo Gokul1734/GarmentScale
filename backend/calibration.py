@@ -8,27 +8,27 @@ import json
 import os
 from pathlib import Path
 
-# Akka full-body reference (inches). Used only to compute multipliers during /api/train.
+# Full-body tape reference (inches). POST /api/train learns multipliers = these ÷ raw model inches.
 REFERENCE_FULL_BODY_INCHES: dict[str, float] = {
-    "Bust": 32.0,
-    "Underbust": 28.0,
-    "Waist": 30.0,
-    "High Hip": 35.0,
-    "Full Hip": 38.0,
-    "Shoulder Width": 14.5,
-    "Neck": 13.0,
-    "Arm Length": 22.0,
-    "Bicep": 12.0,
-    "Wrist": 6.5,
-    "Thigh": 21.0,
-    "Knee": 16.0,
-    "Calf": 14.0,
-    "Ankle": 9.0,
-    "Inseam": 31.0,
-    "Outseam": 42.0,
-    "Torso Length": 16.0,
-    "Crotch Depth": 13.0,
-    "Total Height": 66.0,
+    "Bust": 29.9,
+    "Underbust": 25.1,
+    "Waist": 26.5,
+    "High Hip": 33.2,
+    "Full Hip": 22.1,
+    "Shoulder Width": 11.4,
+    "Neck": 14.7,
+    "Arm Length": 20.3,
+    "Bicep": 10.4,
+    "Wrist": 5.3,
+    "Thigh": 18.9,
+    "Knee": 16.3,
+    "Calf": 14.5,
+    "Ankle": 8.8,
+    "Inseam": 30.0,
+    "Outseam": 39.7,
+    "Torso Length": 13.8,
+    "Crotch Depth": 12.0,
+    "Total Height": 66.0,  # 5'6"
 }
 
 
@@ -58,37 +58,43 @@ def load_calibration_mults() -> dict[str, float] | None:
 def save_calibration_mults(mults: dict[str, float]) -> Path:
     path = _calibration_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"mults": mults, "reference": "akka_tape", "note": "ref_inch / raw_inch from training images"}
+    payload = {
+        "mults": mults,
+        "reference": "tape_profile_v2",
+        "note": "ref_inch / raw_inch from training images",
+    }
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return path
 
 
 def default_mults_until_trained() -> dict[str, float]:
     """
-    If you have not run POST /api/train yet, optional bootstrap ratios (Akka / one nominal model run).
-    Disable with BODY_MEASURE_DEFAULT_CALIB=0 — then only raw geometry until you train.
+    Before POST /api/train: optional bootstrap toward REFERENCE using a nominal raw run.
+    Set nominal ≈ typical uncalibrated model output for your setup; here aligned so mult≈1 when raw≈ref.
+    Disable with BODY_MEASURE_DEFAULT_CALIB=0 — raw geometry only until you train.
     """
     if os.environ.get("BODY_MEASURE_DEFAULT_CALIB", "1").strip().lower() in ("0", "false", "no"):
         return {}
+    # Slightly above reference so first-time users get a gentle pull if raw is high (tune if needed).
     nominal = {
-        "Bust": 37.9,
-        "Underbust": 33.3,
-        "Waist": 35.6,
-        "High Hip": 41.5,
-        "Full Hip": 45.1,
-        "Shoulder Width": 17.2,
-        "Neck": 15.4,
-        "Arm Length": 26.1,
-        "Bicep": 14.2,
-        "Wrist": 7.8,
-        "Thigh": 24.9,
-        "Knee": 18.9,
-        "Calf": 16.6,
-        "Ankle": 10.7,
-        "Inseam": 36.7,
-        "Outseam": 49.8,
-        "Torso Length": 18.9,
-        "Crotch Depth": 15.3,
+        "Bust": 31.5,
+        "Underbust": 26.5,
+        "Waist": 28.0,
+        "High Hip": 35.0,
+        "Full Hip": 23.5,
+        "Shoulder Width": 12.0,
+        "Neck": 15.5,
+        "Arm Length": 21.5,
+        "Bicep": 11.0,
+        "Wrist": 5.6,
+        "Thigh": 20.0,
+        "Knee": 17.0,
+        "Calf": 15.2,
+        "Ankle": 9.2,
+        "Inseam": 31.5,
+        "Outseam": 42.0,
+        "Torso Length": 14.5,
+        "Crotch Depth": 12.5,
         "Total Height": 66.0,
     }
     out: dict[str, float] = {}

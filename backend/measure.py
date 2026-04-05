@@ -40,8 +40,17 @@ def _cm_px_calibration_mult() -> float:
     return max(0.5, _env_float("BODY_MEASURE_CM_CALIB", "1.0"))
 
 
+def _inch_decimal_places() -> int:
+    """Linear measurements: default 2 decimals (set BODY_MEASURE_INCH_DECIMALS=1 for 29.9\" style)."""
+    try:
+        return max(0, min(4, int(os.environ.get("BODY_MEASURE_INCH_DECIMALS", "1"))))
+    except ValueError:
+        return 1
+
+
 def _fmt_inch(v: float) -> str:
-    return f'{v:.1f}"'
+    d = _inch_decimal_places()
+    return f"{v:.{d}f}\""
 
 
 def build_jean_style(display: dict[str, str]) -> dict[str, str]:
@@ -95,7 +104,7 @@ def _merged_to_display_strings(merged: dict[str, float], mults: dict[str, float]
         if label == "Total Height":
             display[label] = format_inches(adj)
         else:
-            display[label] = f'{adj:.1f}"'
+            display[label] = _fmt_inch(adj)
     return display
 
 
@@ -487,15 +496,19 @@ def cm_to_inches(cm: float) -> float:
 
 
 def format_inches(v: float) -> str:
-    """e.g. 32.0 -> '32\"' , 66.5 inches height -> 5'6\" """
-    if v > 48:  # likely height
+    """Height in feet/inches; fractional inches follow BODY_MEASURE_INCH_DECIMALS."""
+    d = _inch_decimal_places()
+    if v > 48:
         feet = int(v // 12)
-        inch = round(v - feet * 12)
-        if inch >= 12:
-            feet += 1
-            inch = 0
-        return f"{feet}'{inch}\""
-    return f'{v:.1f}"'
+        inch = v - feet * 12
+        if d == 0:
+            inch = round(inch)
+            if inch >= 12:
+                feet += 1
+                inch = 0
+            return f"{feet}'{inch}\""
+        return f"{feet}'{inch:.{d}f}\""
+    return _fmt_inch(v)
 
 
 def run_all(
