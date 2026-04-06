@@ -42,6 +42,19 @@
       border-radius: 12px;
       padding: 1rem 1.1rem;
     }
+    .upload-card { position: relative; outline: none; }
+    .upload-card:focus-within { border-color: rgba(91, 141, 239, 0.7); box-shadow: 0 0 0 3px rgba(91, 141, 239, 0.18); }
+    .preview {
+      margin-top: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.02);
+      display: none;
+    }
+    .preview.on { display: block; }
+    .preview img { display: block; width: 100%; height: 140px; object-fit: cover; }
+    .paste-hint { margin-top: 0.5rem; font-size: 0.75rem; color: var(--muted); }
     .card h3 { margin: 0 0 0.25rem; font-size: 0.95rem; font-weight: 600; }
     .card .dist { font-size: 0.75rem; color: var(--muted); margin-bottom: 0.6rem; }
     input[type="file"] { width: 100%; font-size: 0.8rem; color: var(--muted); }
@@ -70,6 +83,8 @@
     button:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
     .results { margin-top: 2rem; display: none; }
     .results.visible { display: block; }
+    .results-grid { display: grid; gap: 1rem; grid-template-columns: 1fr; align-items: start; }
+    @media (min-width: 900px) { .results-grid { grid-template-columns: 1fr 1fr; } }
     table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
     th, td { text-align: left; padding: 0.55rem 0.75rem; border-bottom: 1px solid var(--border); }
     th { color: var(--muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }
@@ -100,25 +115,33 @@
     <p class="sub">Upload four photos — front &amp; back at <strong>142&nbsp;cm</strong>, left &amp; right profile at <strong>130&nbsp;cm</strong>. Tight clothing and A-pose improve accuracy.</p>
 
     <div class="grid">
-      <div class="card">
+      <div class="card upload-card" data-slot="front">
         <h3>Front</h3>
         <div class="dist">Camera ↔ subject: 142&nbsp;cm</div>
         <input type="file" id="front" accept="image/*" />
+        <div class="preview" id="prev_front"><img alt="Front preview" /></div>
+        <div class="paste-hint">Tip: click this card, then paste (Ctrl+V).</div>
       </div>
-      <div class="card">
+      <div class="card upload-card" data-slot="back">
         <h3>Back</h3>
         <div class="dist">Camera ↔ subject: 142&nbsp;cm</div>
         <input type="file" id="back" accept="image/*" />
+        <div class="preview" id="prev_back"><img alt="Back preview" /></div>
+        <div class="paste-hint">Tip: click this card, then paste (Ctrl+V).</div>
       </div>
-      <div class="card">
+      <div class="card upload-card" data-slot="left">
         <h3>Left profile</h3>
         <div class="dist">Camera ↔ subject: 130&nbsp;cm</div>
         <input type="file" id="left" accept="image/*" />
+        <div class="preview" id="prev_left"><img alt="Left preview" /></div>
+        <div class="paste-hint">Tip: click this card, then paste (Ctrl+V).</div>
       </div>
-      <div class="card">
+      <div class="card upload-card" data-slot="right">
         <h3>Right profile</h3>
         <div class="dist">Camera ↔ subject: 130&nbsp;cm</div>
         <input type="file" id="right" accept="image/*" />
+        <div class="preview" id="prev_right"><img alt="Right preview" /></div>
+        <div class="paste-hint">Tip: click this card, then paste (Ctrl+V).</div>
       </div>
     </div>
 
@@ -127,20 +150,25 @@
     <div class="loader" id="loader">Processing with AI (pose + silhouette)…</div>
 
     <div class="results" id="results">
-      <h2 class="section-title">Full body (tailor-style)</h2>
-      <div class="card" style="padding: 0; overflow: hidden;">
-        <table>
-          <thead><tr><th>Measurement</th><th>Value</th></tr></thead>
-          <tbody id="tbody"></tbody>
-        </table>
-      </div>
-
-      <h2 class="section-title">Jean-style summary</h2>
-      <div class="card" style="padding: 0; overflow: hidden;">
-        <table>
-          <thead><tr><th>Item</th><th>Value</th></tr></thead>
-          <tbody id="jeanbody"></tbody>
-        </table>
+      <div class="results-grid">
+        <div>
+          <h2 class="section-title">Jean-style summary</h2>
+          <div class="card" style="padding: 0; overflow: hidden;">
+            <table>
+              <thead><tr><th>Item</th><th>Value</th></tr></thead>
+              <tbody id="jeanbody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div>
+          <h2 class="section-title">Full body (tailor-style)</h2>
+          <div class="card" style="padding: 0; overflow: hidden;">
+            <table>
+              <thead><tr><th>Measurement</th><th>Value</th></tr></thead>
+              <tbody id="tbody"></tbody>
+            </table>
+          </div>
+        </div>
       </div>
       <div id="warnings"></div>
       <p class="note">Measurements are computed from your images (pose + silhouette). EXIF orientation is applied so phones shoot correctly. Use <strong>Train tape calibration</strong> once with your four reference photos: the app learns multipliers toward the Akka tape list and saves them on the server. Until then, optional default multipliers may apply (set <code>BODY_MEASURE_DEFAULT_CALIB=0</code> for raw geometry only).</p>
@@ -152,9 +180,70 @@
     const train = $("train");
     const loader = $("loader");
     const results = $("results");
+    const ids = ["front", "back", "left", "right"];
+    let lastSlot = "front";
+
+    const previewUrl = { front: null, back: null, left: null, right: null };
+
+    function updatePreview(slot) {
+      const inp = $(slot);
+      const box = $("prev_" + slot);
+      if (!inp || !box) return;
+      const img = box.querySelector("img");
+      const file = inp.files && inp.files[0];
+      if (!file) {
+        if (previewUrl[slot]) URL.revokeObjectURL(previewUrl[slot]);
+        previewUrl[slot] = null;
+        box.classList.remove("on");
+        if (img) img.src = "";
+        return;
+      }
+      if (previewUrl[slot]) URL.revokeObjectURL(previewUrl[slot]);
+      previewUrl[slot] = URL.createObjectURL(file);
+      if (img) img.src = previewUrl[slot];
+      box.classList.add("on");
+    }
+
+    function setInputFile(input, file) {
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      input.files = dt.files;
+    }
+
+    for (const slot of ids) {
+      const inp = $(slot);
+      if (inp) inp.addEventListener("change", () => updatePreview(slot));
+    }
+
+    for (const el of document.querySelectorAll(".upload-card")) {
+      el.addEventListener("click", () => {
+        const slot = el.getAttribute("data-slot");
+        if (slot) lastSlot = slot;
+        const inp = $(slot);
+        if (inp) inp.focus();
+      });
+    }
+
+    document.addEventListener("paste", (e) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      const imgItem = Array.from(items).find((it) => it.type && it.type.startsWith("image/"));
+      if (!imgItem) return;
+      const file = imgItem.getAsFile();
+      if (!file) return;
+
+      // Prefer last clicked slot; else first empty slot.
+      const preferred = $(lastSlot);
+      const target =
+        preferred && (!preferred.files || preferred.files.length === 0)
+          ? preferred
+          : ids.map((id) => $(id)).find((inp) => inp && (!inp.files || inp.files.length === 0)) || preferred;
+      if (!target) return;
+      setInputFile(target, file);
+      updatePreview(target.id);
+    });
 
     function buildFormData() {
-      const ids = ["front", "back", "left", "right"];
       const fd = new FormData();
       for (const id of ids) {
         const inp = $(id);
